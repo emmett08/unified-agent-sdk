@@ -59,7 +59,14 @@ export interface FileChange {
   hunkCount?: number;
 }
 
-export type AgentEvent =
+export interface AgentEventMeta {
+  agentId?: string;
+  stepId?: string;
+  workflowName?: string;
+  traceId?: string;
+}
+
+type AgentEventCore =
   | { type: 'run_start'; runId: string; provider: ProviderId; model: string; startedAt: number }
   | { type: 'status'; status: RunStatus; detail?: string; at: number }
   | { type: 'thinking_delta'; text: string; at: number }
@@ -68,10 +75,16 @@ export type AgentEvent =
   | { type: 'tool_result'; result: ToolResult; at: number }
   | { type: 'tool_approval_request'; request: ToolApprovalRequest; at: number }
   | { type: 'file_change'; change: FileChange; at: number }
+  | { type: 'memory_read'; key: string; value?: unknown; at: number }
+  | { type: 'memory_write'; key: string; value: unknown; at: number }
+  | { type: 'retrieval_query'; query: string; topK: number; at: number }
+  | { type: 'retrieval_results'; query: string; topK: number; resultCount: number; at: number }
   | { type: 'step_finish'; step: StepFinish; at: number }
   | { type: 'usage'; usage: Usage; at: number }
   | { type: 'error'; error: string; raw?: unknown; at: number }
   | { type: 'run_finish'; runId: string; reason: FinishReason; at: number };
+
+export type AgentEvent = AgentEventCore & { meta?: AgentEventMeta };
 
 export interface StepFinish {
   index: number;
@@ -95,4 +108,3 @@ export interface AgentResult {
   toolCalls: ToolCall[];
   toolResults: ToolResult[];
 }
-

@@ -1,6 +1,11 @@
 import type { ToolDefinition, ToolExecutionContext } from './tool-types.js';
+import type { EventBus } from '../core/event-bus.js';
 
-export function createMemoryTools(): ToolDefinition[] {
+export interface MemoryToolsOptions {
+  events?: EventBus;
+}
+
+export function createMemoryTools(opts: MemoryToolsOptions = {}): ToolDefinition[] {
   return [
     {
       name: 'memory_get',
@@ -13,7 +18,10 @@ export function createMemoryTools(): ToolDefinition[] {
       },
       capabilities: ['memory:read'],
       execute: async (args: any, ctx: ToolExecutionContext) => {
-        return ctx.memory.kv.get(String(args.key));
+        const key = String(args.key);
+        const value = ctx.memory.kv.get(key);
+        opts.events?.emit({ type: 'memory_read', key, value, at: Date.now() });
+        return value;
       }
     },
     {
@@ -27,7 +35,9 @@ export function createMemoryTools(): ToolDefinition[] {
       },
       capabilities: ['memory:write'],
       execute: async (args: any, ctx: ToolExecutionContext) => {
-        ctx.memory.kv.set(String(args.key), args.value);
+        const key = String(args.key);
+        ctx.memory.kv.set(key, args.value);
+        opts.events?.emit({ type: 'memory_write', key, value: args.value, at: Date.now() });
         return { ok: true };
       }
     }

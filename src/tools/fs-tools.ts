@@ -24,16 +24,44 @@ async function fileFingerprint(ctx: ToolExecutionContext, path: string): Promise
 export interface FsToolOptions {
   events: EventBus;
   preview: boolean;
+  /**
+   * Optional prefix for default tool names.
+   * - default: `fs_`
+   * - compatibility: `ws_` (matches downstream expectations like `ws_write_file`)
+   */
+  toolPrefix?: 'fs_' | 'ws_';
+  /**
+   * Optional explicit tool names for specific operations.
+   * This overrides `toolPrefix` for those operations.
+   */
+  names?: Partial<Record<FsToolOperation, string>>;
+  /**
+   * Optional alias names registered in addition to the primary name.
+   * Useful for backward compatibility without changing the canonical name.
+   */
+  aliases?: Partial<Record<FsToolOperation, string[]>>;
 }
+
+export type FsToolOperation = 'readFile' | 'writeFile' | 'deletePath' | 'renamePath' | 'applyPatch';
 
 export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
   const { events, preview } = opts;
 
   const emitChange = (change: FileChange) => events.emit({ type: 'file_change', change, at: Date.now() });
 
+  const prefix = opts.toolPrefix ?? 'fs_';
+  const opName = (op: FsToolOperation, defaultSuffix: string): string => {
+    return opts.names?.[op] ?? `${prefix}${defaultSuffix}`;
+  };
+  const registerAliases = (op: FsToolOperation, tool: ToolDefinition, out: ToolDefinition[]) => {
+    out.push(tool);
+    const aliases = opts.aliases?.[op] ?? [];
+    for (const alias of aliases) out.push({ ...tool, name: alias });
+  };
+
   const tools: ToolDefinition[] = [
     {
-      name: 'fs_read_file',
+      name: opName('readFile', 'read_file'),
       description: 'Read a UTF-8 text file from the workspace.',
       inputSchema: {
         type: 'object',
@@ -60,7 +88,7 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
       },
     },
     {
-      name: 'fs_write_file',
+      name: opName('writeFile', 'write_file'),
       description: 'Write a UTF-8 text file to the workspace, creating directories if needed.',
       inputSchema: {
         type: 'object',
@@ -84,7 +112,7 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
       },
     },
     {
-      name: 'fs_delete_path',
+      name: opName('deletePath', 'delete_path'),
       description: 'Delete a file or directory from the workspace.',
       inputSchema: {
         type: 'object',
@@ -102,7 +130,7 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
       },
     },
     {
-      name: 'fs_rename_path',
+      name: opName('renamePath', 'rename_path'),
       description: 'Rename/move a file or directory within the workspace.',
       inputSchema: {
         type: 'object',
@@ -124,7 +152,7 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
       },
     },
     {
-      name: 'fs_apply_patch',
+      name: opName('applyPatch', 'apply_patch'),
       description: 'Apply a unified diff patch to files. Emits file-change events per hunk.',
       inputSchema: {
         type: 'object',
@@ -180,5 +208,13 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
     },
   ];
 
-  return tools;
+  // Register any alias names without duplicating the implementation.
+  const out: ToolDefinition[] = [];
+  registerAliases('readFile', tools[0]!, out);
+  registerAliases('writeFile', tools[1]!, out);
+  registerAliases('deletePath', tools[2]!, out);
+  registerAliases('renamePath', tools[3]!, out);
+  registerAliases('applyPatch', tools[4]!, out);
+
+  return out;
 }

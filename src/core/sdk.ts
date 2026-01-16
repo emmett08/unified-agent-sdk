@@ -12,7 +12,7 @@ import { SharedMemoryPool } from '../memory/shared-memory-pool.js';
 import type { WorkspacePort } from '../workspaces/workspace.js';
 import { PreviewWorkspace } from '../workspaces/preview-workspace.js';
 import { JournalWorkspace } from '../workspaces/journal-workspace.js';
-import { createFsTools } from '../tools/fs-tools.js';
+import { createFsTools, type FsToolOperation } from '../tools/fs-tools.js';
 import { createMemoryTools } from '../tools/memory-tools.js';
 import type { RetrieverPort } from '../retrieval/retriever.js';
 import { createRetrievalTools } from '../tools/retrieval-tools.js';
@@ -22,6 +22,7 @@ import { ModelRouter } from '../routing/router.js';
 import { AiSdkEngine } from '../providers/ai-sdk/ai-sdk-engine.js';
 import { AuggieEngine } from '../providers/auggie/auggie-engine.js';
 import { OllamaEngine } from '../providers/ollama/ollama-engine.js';
+import { attachSessionUpdates, type SessionUpdateHooks } from '../compat/session-updates.js';
 
 export interface UnifiedAgentSDKConfig {
   providers: {
@@ -40,12 +41,28 @@ export interface RunHooks {
   onEvent?: (ev: AgentEvent, api: ThinkingTimeApi) => void | Promise<void>;
   onThinkingDelta?: (delta: string, api: ThinkingTimeApi) => void | Promise<void>;
   onTextDelta?: (delta: string, api: ThinkingTimeApi) => void | Promise<void>;
+  sessionUpdates?: SessionUpdateHooks;
 }
 
 export interface RunRouting {
   modelClass?: ModelClass;
   preferredProviders?: ProviderId[];
   allowFallback?: boolean;
+}
+
+export type CapabilityValue = boolean | 'unknown';
+
+export interface ProviderCapabilities {
+  providerId: ProviderId;
+  configured: boolean;
+  features: Record<string, CapabilityValue>;
+  versions?: Record<string, string>;
+}
+
+export interface RunFsToolsOptions {
+  toolPrefix?: 'fs_' | 'ws_';
+  names?: Partial<Record<FsToolOperation, string>>;
+  aliases?: Partial<Record<FsToolOperation, string[]>>;
 }
 
 export interface RunOptions {
@@ -65,6 +82,7 @@ export interface RunOptions {
   policy?: ToolPolicy;
   tools?: ToolDefinition[];
   retriever?: RetrieverPort;
+  fsTools?: RunFsToolsOptions;
 
   /** Provider-specific options (e.g. Ollama think level). */
   metadata?: Record<string, unknown>;
@@ -109,6 +127,28 @@ export class UnifiedAgentSDK {
     this.router = new ModelRouter(this.models);
   }
 
+  getProviderCapabilities(): ProviderCapabilities[] {
+    return (['ai-sdk', 'auggie', 'ollama'] as const).map((providerId) => {
+      const configured =
+        providerId === 'ai-sdk'
+          ? Boolean(this.config.providers.aiSdk)
+          : providerId === 'auggie'
+            ? Boolean(this.config.providers.auggie)
+            : Boolean(this.config.providers.ollama);
+
+      return {
+        providerId,
+        configured,
+        features: {
+          streaming: true,
+          tools: true,
+          reasoning: 'unknown',
+          vision: 'unknown',
+          usage: 'unknown',
+        },
+      };
+    });
+  }
 
   /**
    * Optional: populate the model catalog from provider inventories.
@@ -201,6 +241,7 @@ export class UnifiedAgentSDK {
     if (opts.hooks?.onEvent) outerBus.subscribe((ev) => opts.hooks!.onEvent!(ev, api));
     if (opts.hooks?.onThinkingDelta) outerBus.subscribe((ev) => (ev.type === 'thinking_delta' ? opts.hooks!.onThinkingDelta!(ev.text, api) : undefined));
     if (opts.hooks?.onTextDelta) outerBus.subscribe((ev) => (ev.type === 'text_delta' ? opts.hooks!.onTextDelta!(ev.text, api) : undefined));
+    if (opts.hooks?.sessionUpdates) attachSessionUpdates(outerBus, opts.hooks.sessionUpdates);
 
     // Preview workspace (stable across attempts)
     if ((opts.workspaceMode ?? 'live') === 'preview') {
@@ -252,9 +293,9 @@ export class UnifiedAgentSDK {
     const policy = opts.policy ?? new AllowAllToolsPolicy();
 
     const tools: ToolDefinition[] = [
-      ...createFsTools({ events: bus, preview: workspaceMode === 'preview' }),
-      ...createMemoryTools(),
-      ...(opts.retriever ? createRetrievalTools(opts.retriever) : []),
+      ...createFsTools({ events: bus, preview: workspaceMode === 'preview', ...(opts.fsTools ?? {}) }),
+      ...createMemoryTools({ events: bus }),
+      ...(opts.retriever ? createRetrievalTools(opts.retriever, { events: bus }) : []),
       ...(opts.tools ?? []),
     ];
 

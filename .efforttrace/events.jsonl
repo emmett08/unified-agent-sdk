@@ -1,0 +1,4 @@
+{"v":1,"ts":"2026-01-16T12:49:22.476Z","source":"ai","repoRoot":"/Users/emiller/work/code/personal/unified-agent-sdk","kind":"ai.usage","meta":{"tool":"codex","evidence":"enabled","detail":"extensionId=openai.chatgpt"}}
+{"v":1,"ts":"2026-01-16T13:18:26.312Z","source":"vscode","repoRoot":"/Users/emiller/work/code/personal/unified-agent-sdk","kind":"activity","meta":{"type":"focus"}}
+{"v":1,"ts":"2026-01-16T13:22:29.406Z","source":"vscode","repoRoot":"/Users/emiller/work/code/personal/unified-agent-sdk","kind":"activity","meta":{"type":"focus"}}
+{"v":1,"ts":"2026-01-16T13:25:27.659Z","source":"vscode","repoRoot":"/Users/emiller/work/code/personal/unified-agent-sdk","kind":"activity","meta":{"type":"focus"}}

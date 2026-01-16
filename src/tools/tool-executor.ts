@@ -53,6 +53,8 @@ export class ToolExecutor {
     if (decision.kind === 'deny') throw new ToolDeniedError(tool.name, decision.reason);
 
     if (decision.kind === 'ask') {
+      const requireExplicitApproval = this.opts.requireExplicitApproval ?? true;
+      if (!requireExplicitApproval) throw new ToolDeniedError(tool.name, decision.reason || 'Tool requires explicit approval');
       // Important: register the approval waiter before emitting the event.
       // Hooks may auto-approve immediately; emitting first can race and lose the approval.
       const approvalPromise = this.opts.controller.requestApproval(call.id);

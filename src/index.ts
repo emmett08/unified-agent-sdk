@@ -1,6 +1,16 @@
 export * from './core/types.js';
 export * from './core/errors.js';
-export { UnifiedAgentSDK, type UnifiedAgentSDKConfig, type RunOptions, type AgentRun } from './core/sdk.js';
+export {
+  UnifiedAgentSDK,
+  type UnifiedAgentSDKConfig,
+  type RunOptions,
+  type AgentRun,
+  type ProviderCapabilities,
+  type CapabilityValue,
+  type RunFsToolsOptions,
+} from './core/sdk.js';
+
+export { ToolCallAggregator, attachSessionUpdates, type SessionUpdateHooks, type ToolCallAggregatorHooks } from './compat/session-updates.js';
 
 export * from './policies/tool-policy.js';
 
