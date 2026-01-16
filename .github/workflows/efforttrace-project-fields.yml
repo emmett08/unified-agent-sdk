@@ -1,0 +1,40 @@
+name: EffortTrace → Project Fields
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  repository-projects: write
+
+concurrency:
+  group: efforttrace-project-fields-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  update-project-fields:
+    if: ${{ github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    env:
+      EFFORTTRACE_PROJECT_OWNER: emmett08
+      EFFORTTRACE_PROJECT_NUMBER: "10"
+      EFFORTTRACE_FIELD_EFFECTIVE_START: "Effective Start"
+      EFFORTTRACE_FIELD_EFFECTIVE_END: "Effective End"
+      EFFORTTRACE_FIELD_EFFECTIVE_HOURS: "Effective Hours"
+      EFFORTTRACE_REPORT_PATH: ".efforttrace-project/pr-${{ github.event.pull_request.number }}.json"
+      EFFORTTRACE_UPDATE_PR_ITEM: "true"
+      EFFORTTRACE_REPO_OWNER: ${{ github.repository_owner }}
+      EFFORTTRACE_REPO_NAME: ${{ github.event.repository.name }}
+      EFFORTTRACE_PR_NUMBER: ${{ github.event.pull_request.number }}
+      GH_TOKEN: ${{ secrets.EFFORTTRACE_PROJECT_TOKEN || github.token }}
+    steps:
+      - name: Checkout merge commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Update Project fields for linked issues
+        run: node .github/scripts/efforttrace-project-fields.mjs
