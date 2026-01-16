@@ -46,12 +46,28 @@ function extractRequestId(final: any): string | undefined {
   return undefined;
 }
 
-function extractRawFinishReason(final: any): string | undefined {
-  const fr = final?.rawFinishReason ?? final?.finishReason;
-  if (typeof fr === 'string' && fr) return fr;
-  const choiceFr = final?.response?.choices?.[0]?.finish_reason;
-  if (typeof choiceFr === 'string' && choiceFr) return choiceFr;
-  return undefined;
+async function resolveStreamTextSummary(final: any): Promise<{
+  finishReason?: string;
+  rawFinishReason?: string;
+  usage?: any;
+  totalUsage?: any;
+  text?: string;
+  content?: any[];
+  toolCalls?: any[];
+  toolResults?: any[];
+}> {
+  // AI SDK exposes many fields as PromiseLike and they auto-consume the stream.
+  // We only use these as a fallback / for robust logging.
+  const out: any = {};
+  try { out.finishReason = await final?.finishReason; } catch {}
+  try { out.rawFinishReason = await final?.rawFinishReason; } catch {}
+  try { out.usage = await final?.usage; } catch {}
+  try { out.totalUsage = await final?.totalUsage; } catch {}
+  try { out.text = await final?.text; } catch {}
+  try { out.content = await final?.content; } catch {}
+  try { out.toolCalls = await final?.toolCalls; } catch {}
+  try { out.toolResults = await final?.toolResults; } catch {}
+  return out;
 }
 
 export class AiSdkEngine implements AgentEngine {
@@ -232,24 +248,37 @@ export class AiSdkEngine implements AgentEngine {
           streamConsumed = true;
         }
 
-        const final = await streamResult;
-        const fr = extractRawFinishReason(final);
+        const final = streamResult as any;
+        const resolved = await resolveStreamTextSummary(final);
+
+        // Prefer streamed text, but fall back to AI SDK's resolved `text` when the stream provides none.
+        if (!finalText && typeof resolved.text === 'string' && resolved.text) {
+          finalText = resolved.text;
+          contentParts.add('text');
+        }
+
+        const rawFinish = typeof resolved.rawFinishReason === 'string' ? resolved.rawFinishReason : undefined;
+        const fr = rawFinish ?? (typeof resolved.finishReason === 'string' ? resolved.finishReason : undefined);
         finishReason = normaliseFinishReason(fr, deps.controller.signal.aborted);
 
-        const usage = final.totalUsage ?? final.usage;
+        // Usage is PromiseLike in AI SDK; await it to avoid "0 in/out" from mis-reading.
+        const usage = resolved.totalUsage ?? resolved.usage;
         if (usage) events.emit({ type: 'usage', usage: normaliseUsage(usage), at: Date.now() });
 
-        // Some AI SDK variants expose toolCalls/toolResults on the final result; use them as a fallback.
-        if (toolCalls.length === 0 && Array.isArray(final?.toolCalls)) {
-          for (const c of final.toolCalls) {
+        // Robust tool call/result fallback: AI SDK exposes these as PromiseLike arrays.
+        const resolvedToolCalls = Array.isArray(resolved.toolCalls) ? resolved.toolCalls : [];
+        const resolvedToolResults = Array.isArray(resolved.toolResults) ? resolved.toolResults : [];
+
+        if (resolvedToolCalls.length && toolCalls.length === 0) {
+          for (const c of resolvedToolCalls) {
             const toolName = c?.toolName ?? c?.name;
             if (!toolName) continue;
             toolCalls.push({ id: String(c?.toolCallId ?? c?.id ?? uuid()), toolName: String(toolName), args: c?.args ?? c?.input ?? {} });
             contentParts.add('tool');
           }
         }
-        if (toolResults.length === 0 && Array.isArray(final?.toolResults)) {
-          for (const r of final.toolResults) {
+        if (resolvedToolResults.length && toolResults.length === 0) {
+          for (const r of resolvedToolResults) {
             const toolName = r?.toolName ?? r?.name;
             if (!toolName) continue;
             const result = r?.result ?? r?.output ?? r?.data;
@@ -262,9 +291,17 @@ export class AiSdkEngine implements AgentEngine {
         const toolOnly = trimmed.length === 0 && toolCalls.length > 0;
         const empty = trimmed.length === 0 && toolCalls.length === 0;
         const requestId = extractRequestId(final);
-        const rawFinish = extractRawFinishReason(final);
-        const refusalOrFiltered =
-          typeof rawFinish === 'string' && /refus|filter|content[_-]?filter/i.test(rawFinish);
+        const refusalOrFiltered = typeof rawFinish === 'string' && /refus|filter|content[_-]?filter/i.test(rawFinish);
+
+        // If available, classify the final content parts too (text/tool/json).
+        if (Array.isArray(resolved.content)) {
+          for (const p of resolved.content) {
+            const pt = p?.type;
+            if (pt === 'text') contentParts.add('text');
+            if (pt === 'tool-call' || pt === 'tool-result') contentParts.add('tool');
+            if (pt === 'data') contentParts.add('json');
+          }
+        }
 
         events.emit({
           type: 'provider_debug',
@@ -296,7 +333,18 @@ export class AiSdkEngine implements AgentEngine {
           events.emit({
             type: 'error',
             error: err.message,
-            raw: { requestId, rawFinishReason: rawFinish, final },
+            raw: {
+              requestId,
+              rawFinishReason: rawFinish,
+              // Include the resolved view (serialisable) rather than the full result object.
+              resolved: {
+                finishReason: resolved.finishReason,
+                rawFinishReason: resolved.rawFinishReason,
+                usage: resolved.usage,
+                totalUsage: resolved.totalUsage,
+                contentPartTypes: Array.isArray(resolved.content) ? resolved.content.map((p: any) => p?.type).filter(Boolean) : undefined,
+              },
+            },
             at: Date.now(),
           });
           throw err;
