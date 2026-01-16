@@ -73,10 +73,14 @@
     "build:cjs": "tsc -p tsconfig.cjs.json && node ./scripts/rename-cjs.mjs",
     "build:types": "tsc -p tsconfig.types.json",
     "build": "npm run clean && npm run build:types && npm run build:esm && npm run build:cjs",
-    "lint": "node -e \"console.log('No lint configured (deliberately minimal).')\""
+    "lint": "node -e \"console.log('No lint configured (deliberately minimal).')\"",
+    "demo:openai": "node ./examples/openai-chatgpt-5.2-cli.mjs",
+    "demo:openai:help": "node ./examples/openai-chatgpt-5.2-cli.mjs --help"
   },
   "devDependencies": {
+    "@ai-sdk/openai": "^2.0.0",
     "@types/uuid": "^10.0.0",
+    "ai": "^6.0.0",
     "typescript": "^5.9.3"
   }
 }

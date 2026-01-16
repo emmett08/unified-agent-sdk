@@ -31,6 +31,15 @@ export class AiSdkEngine implements AgentEngine {
 
   constructor(private cfg: AiSdkProviderConfig) {}
 
+  private toAiSchema(ai: AiModule, inputSchema: any): any {
+    // AI SDK expects a "Vercel schema" object (from `jsonSchema()` / zod / standard schema).
+    // Our SDK uses plain JSON Schema objects, so wrap them to avoid "schema is not a function".
+    if (!inputSchema) return inputSchema;
+    if (typeof inputSchema === 'function') return inputSchema;
+    if (typeof inputSchema === 'object' && ai?.jsonSchema) return ai.jsonSchema(inputSchema);
+    return inputSchema;
+  }
+
   async run(req: EngineRequest, deps: EngineDeps): Promise<EngineRun> {
     const events = new EventBus();
     const startedAt = Date.now();
@@ -51,7 +60,7 @@ export class AiSdkEngine implements AgentEngine {
     for (const [name, def] of toolNameToDef.entries()) {
       tools[name] = ai.tool({
         description: def.description,
-        inputSchema: def.inputSchema,
+        inputSchema: this.toAiSchema(ai, def.inputSchema),
         execute: async (args: unknown) => {
           const h = hashToolCall(name, args);
           const q = pendingIdsByHash.get(h);

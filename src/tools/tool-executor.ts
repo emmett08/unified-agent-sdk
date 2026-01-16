@@ -53,12 +53,15 @@ export class ToolExecutor {
     if (decision.kind === 'deny') throw new ToolDeniedError(tool.name, decision.reason);
 
     if (decision.kind === 'ask') {
+      // Important: register the approval waiter before emitting the event.
+      // Hooks may auto-approve immediately; emitting first can race and lose the approval.
+      const approvalPromise = this.opts.controller.requestApproval(call.id);
       this.opts.events.emit({
         type: 'tool_approval_request',
         request: { call, reason: decision.reason, policy: this.opts.policy.name },
         at: Date.now(),
       });
-      const allowed = await this.opts.controller.requestApproval(call.id);
+      const allowed = await approvalPromise;
       if (!allowed) throw new ToolDeniedError(tool.name, 'User denied tool call');
     }
 

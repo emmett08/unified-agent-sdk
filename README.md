@@ -58,6 +58,20 @@ for await (const ev of run.events) {
 }
 ```
 
+## Demo: OpenAI CLI (thinking callbacks + file write)
+
+This repo includes a runnable CLI demo that:
+- uses `model: openai/chatgpt-5.2` (override with `--model`)
+- streams `thinking_delta`/`text_delta` via `hooks`
+- requires approval for `fs:write` and auto-approves in the CLI
+- proves a tool-driven file write by reading the file back at the end
+
+```bash
+npm i ai @ai-sdk/openai
+OPENAI_API_KEY=... npm run build
+OPENAI_API_KEY=... npm run demo:openai -- --out demo/agent-proof.txt --model openai/gpt-4o-mini
+```
+
 ## VS Code workspace adapter
 
 This SDK does **not** depend on `vscode`. Use the adapter entrypoint:
@@ -92,4 +106,3 @@ const policy = new ToolAllowListPolicy(['fs_read_file', 'fs_apply_patch']);
 - For *failover routing*, prefer `workspaceMode: "preview"` so the SDK can discard changes on a failed attempt.
 - AI SDK tool definitions accept **Zod or JSON schema** input schemas.
 - Ollama `think` output streams via `chunk.message.thinking`, separate from `chunk.message.content`.
-

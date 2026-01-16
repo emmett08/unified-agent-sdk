@@ -1,0 +1,2 @@
+PROOF: 2026-01-16T00:31:14.479Z
+MODEL: openai/gpt-4o-mini
