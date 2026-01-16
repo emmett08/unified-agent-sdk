@@ -24,6 +24,10 @@ export type { ToolDefinition } from './tools/tool-types.js';
 export { createFsTools } from './tools/fs-tools.js';
 export { createMemoryTools } from './tools/memory-tools.js';
 
+export type { ConfigStore } from './config/config-store.js';
+export { MemoryConfigStore } from './config/config-store.js';
+export { FileConfigStore } from './config/file-config-store.js';
+
 export type { RetrieverPort, RetrievedChunk } from './retrieval/retriever.js';
 export type { EmbeddingProvider } from './retrieval/embedding.js';
 export { SimpleVectorIndex } from './retrieval/simple-vector-index.js';
@@ -33,3 +37,5 @@ export { AiSdkEmbeddingProvider } from './providers/ai-sdk/ai-sdk-embeddings.js'
 export { OllamaEmbeddingProvider } from './providers/ollama/ollama-embeddings.js';
 
 export { defaultModelCatalog, ModelCatalog } from './routing/model-catalog.js';
+export type { ModelCapabilities } from './routing/model-catalog.js';
+export type { CircuitBreakerOptions, CircuitBreakerSnapshot, CircuitBreakerEntry } from './routing/circuit-breaker.js';

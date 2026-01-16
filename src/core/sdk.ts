@@ -19,10 +19,12 @@ import { createRetrievalTools } from '../tools/retrieval-tools.js';
 import type { AuggieProviderConfig, AiSdkProviderConfig, OllamaProviderConfig } from '../providers/provider-config.js';
 import { defaultModelCatalog, type ModelCatalog } from '../routing/model-catalog.js';
 import { ModelRouter } from '../routing/router.js';
+import { CircuitBreaker, type CircuitBreakerSnapshot, type CircuitBreakerOptions } from '../routing/circuit-breaker.js';
 import { AiSdkEngine } from '../providers/ai-sdk/ai-sdk-engine.js';
 import { AuggieEngine } from '../providers/auggie/auggie-engine.js';
 import { OllamaEngine } from '../providers/ollama/ollama-engine.js';
 import { attachSessionUpdates, type SessionUpdateHooks } from '../compat/session-updates.js';
+import type { ConfigStore } from '../config/config-store.js';
 
 export interface UnifiedAgentSDKConfig {
   providers: {
@@ -31,10 +33,16 @@ export interface UnifiedAgentSDKConfig {
     ollama?: OllamaProviderConfig;
   };
   memory?: SharedMemoryPool;
+  configStore?: ConfigStore;
   /**
    * Model catalog used for routing. You can add/override models via `sdk.models.register(...)`.
    */
   models?: ModelCatalog;
+  routing?: {
+    circuitBreaker?: CircuitBreakerOptions;
+    /** Key used when persisting routing state in a ConfigStore. */
+    stateKey?: string;
+  };
 }
 
 export interface RunHooks {
@@ -48,6 +56,11 @@ export interface RunRouting {
   modelClass?: ModelClass;
   preferredProviders?: ProviderId[];
   allowFallback?: boolean;
+  mustStream?: boolean;
+  requiresTools?: boolean;
+  allowedProviders?: ProviderId[];
+  blockedProviders?: ProviderId[];
+  minContextTokens?: number;
 }
 
 export type CapabilityValue = boolean | 'unknown';
@@ -120,11 +133,16 @@ export class UnifiedAgentSDK {
   readonly memory: SharedMemoryPool;
   readonly models: ModelCatalog;
   private readonly router: ModelRouter;
+  private circuitBreaker: CircuitBreaker;
+  private circuitBreakerLoaded = false;
+  private circuitBreakerLoadPromise: Promise<void> | null = null;
+  private circuitBreakerSaveQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly config: UnifiedAgentSDKConfig) {
     this.memory = config.memory ?? new SharedMemoryPool();
     this.models = config.models ?? defaultModelCatalog();
     this.router = new ModelRouter(this.models);
+    this.circuitBreaker = new CircuitBreaker(config.routing?.circuitBreaker);
   }
 
   getProviderCapabilities(): ProviderCapabilities[] {
@@ -304,6 +322,8 @@ export class UnifiedAgentSDK {
 
     const availability = this.getAvailability();
 
+    await this.loadCircuitBreakerState();
+
     const plan = this.router.plan(
       availability,
       {
@@ -313,7 +333,16 @@ export class UnifiedAgentSDK {
         preferredProviders: opts.routing?.preferredProviders,
         allowFallback: opts.routing?.allowFallback,
       },
-      { mustStream: true, requiresTools: tools.length > 0 }
+      {
+        mustStream: opts.routing?.mustStream ?? true,
+        requiresTools: opts.routing?.requiresTools ?? tools.length > 0,
+        allowedProviders: opts.routing?.allowedProviders,
+        blockedProviders: opts.routing?.blockedProviders,
+        minContextTokens: opts.routing?.minContextTokens,
+      },
+      {
+        score: (c) => this.scoreCandidate(c.ref, c.profile),
+      }
     );
 
     if (plan.candidates.length === 0) throw new UnifiedAgentError('No providers/models available for this request');
@@ -386,10 +415,14 @@ export class UnifiedAgentSDK {
         await engineRun.close().catch(() => {});
 
         if (attemptWorkspace instanceof JournalWorkspace) attemptWorkspace.commit();
+        this.circuitBreaker.recordSuccess(c.ref);
+        await this.saveCircuitBreakerState();
 
         return result;
       } catch (e) {
         lastError = e;
+        this.circuitBreaker.recordFailure(c.ref);
+        await this.saveCircuitBreakerState();
         bus.emit({ type: 'error', error: (e as Error).message || String(e), raw: e, at: Date.now() });
 
         if (attemptWorkspace instanceof JournalWorkspace) {
@@ -411,6 +444,51 @@ export class UnifiedAgentSDK {
 
     bus.close(lastError);
     throw new UnifiedAgentError('All provider candidates failed', lastError);
+  }
+
+  private scoreCandidate(ref: string, profile: { latencyRank?: number; costRank?: number } | undefined): number {
+    const latency = profile?.latencyRank ?? 100;
+    const cost = profile?.costRank ?? 100;
+    const penalty = this.circuitBreaker.getPenalty(ref);
+    return latency * 10 + cost + penalty;
+  }
+
+  private circuitBreakerStateKey(): string {
+    return this.config.routing?.stateKey ?? 'routing:circuitBreaker:v1';
+  }
+
+  private async loadCircuitBreakerState(): Promise<void> {
+    if (this.circuitBreakerLoaded) return;
+    if (this.circuitBreakerLoadPromise) return this.circuitBreakerLoadPromise;
+
+    this.circuitBreakerLoadPromise = (async () => {
+      const store = this.config.configStore;
+      if (!store) {
+        this.circuitBreakerLoaded = true;
+        return;
+      }
+      const snap = await store.get<CircuitBreakerSnapshot>(this.circuitBreakerStateKey());
+      if (snap?.version !== 1) {
+        this.circuitBreakerLoaded = true;
+        return;
+      }
+      // Replace internal state by re-constructing from snapshot.
+      (this as any).circuitBreaker = new CircuitBreaker(this.config.routing?.circuitBreaker, snap);
+      this.circuitBreakerLoaded = true;
+    })().finally(() => {
+      this.circuitBreakerLoadPromise = null;
+    });
+
+    return this.circuitBreakerLoadPromise;
+  }
+
+  private async saveCircuitBreakerState(): Promise<void> {
+    const store = this.config.configStore;
+    if (!store) return;
+    const key = this.circuitBreakerStateKey();
+    const snapshot = this.circuitBreaker.snapshot();
+    this.circuitBreakerSaveQueue = this.circuitBreakerSaveQueue.then(() => store.set(key, snapshot), () => store.set(key, snapshot));
+    await this.circuitBreakerSaveQueue;
   }
 
   private createEngine(provider: ProviderId) {

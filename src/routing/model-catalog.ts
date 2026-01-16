@@ -1,11 +1,19 @@
 import type { ModelClass, ProviderId } from '../core/types.js';
 
+export interface ModelCapabilities {
+  streaming?: boolean;
+  tools?: boolean;
+  reasoning?: boolean;
+  vision?: boolean;
+}
+
 export interface ModelProfile {
   provider: ProviderId;
   id: string; // provider-specific model id
   classes: ModelClass[];
   displayName?: string;
   maxContextTokens?: number;
+  capabilities?: ModelCapabilities;
   notes?: string;
   // Preferences: smaller is preferred
   latencyRank?: number;

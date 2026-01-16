@@ -93,6 +93,7 @@
   "devDependencies": {
     "@ai-sdk/openai": "^2.0.0",
     "@neuralsea/neo4j-agent-memory": "^0.6.1",
+    "@types/node": "^22.10.0",
     "@types/uuid": "^10.0.0",
     "ai": "^6.0.0",
     "typescript": "^5.9.3"
