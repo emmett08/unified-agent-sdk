@@ -23,6 +23,7 @@ export type { WorkspacePort } from './workspaces/workspace.js';
 export type { ToolDefinition } from './tools/tool-types.js';
 export { createFsTools } from './tools/fs-tools.js';
 export { createMemoryTools } from './tools/memory-tools.js';
+export { applyToolNamePolicy, type ToolNamePolicy, type ToolNameTransform, type ToolNameTransformResult, type ToolNameMapping } from './tools/tool-name-policy.js';
 
 export type { ConfigStore } from './config/config-store.js';
 export { MemoryConfigStore } from './config/config-store.js';

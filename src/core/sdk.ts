@@ -25,6 +25,14 @@ import { AuggieEngine } from '../providers/auggie/auggie-engine.js';
 import { OllamaEngine } from '../providers/ollama/ollama-engine.js';
 import { attachSessionUpdates, type SessionUpdateHooks } from '../compat/session-updates.js';
 import type { ConfigStore } from '../config/config-store.js';
+import {
+  applyToolNamePolicy,
+  remapToolNameToOriginal,
+  type ToolNameMapping,
+  type ToolNamePolicy,
+  type ToolNameTransform,
+  isValidToolName,
+} from '../tools/tool-name-policy.js';
 
 export interface UnifiedAgentSDKConfig {
   providers: {
@@ -96,6 +104,17 @@ export interface RunOptions {
   tools?: ToolDefinition[];
   retriever?: RetrieverPort;
   fsTools?: RunFsToolsOptions;
+  /**
+   * Tool name policy applied at the SDK boundary (before calling providers).
+   * - `strict` (default): validate names and throw a detailed error before provider invocation.
+   * - `sanitize`: normalize invalid names and keep an internal mapping; events/results are remapped back to original names.
+   */
+  toolNamePolicy?: ToolNamePolicy;
+  /**
+   * Advanced hook to transform tool names for provider compatibility. Returned `name` is provider-facing.
+   * `displayName` is stored for downstream UI use (not currently emitted).
+   */
+  toolNameTransform?: ToolNameTransform;
 
   /** Provider-specific options (e.g. Ollama think level). */
   metadata?: Record<string, unknown>;
@@ -310,12 +329,26 @@ export class UnifiedAgentSDK {
 
     const policy = opts.policy ?? new AllowAllToolsPolicy();
 
-    const tools: ToolDefinition[] = [
+    const rawTools: ToolDefinition[] = [
       ...createFsTools({ events: bus, preview: workspaceMode === 'preview', ...(opts.fsTools ?? {}) }),
       ...createMemoryTools({ events: bus }),
       ...(opts.retriever ? createRetrievalTools(opts.retriever, { events: bus }) : []),
       ...(opts.tools ?? []),
     ];
+
+    // Tool name policy (provider-facing tools may differ; SDK callers always see original names).
+    const { tools, mapping: toolNameMapping } = (() => {
+      try {
+        return applyToolNamePolicy(rawTools, { policy: opts.toolNamePolicy, transform: opts.toolNameTransform });
+      } catch (e) {
+        // Provide deterministic, indexed context even if the underlying provider would error later.
+        const invalid = rawTools
+          .map((t, i) => ({ i, name: t.name }))
+          .filter((x) => !isValidToolName(x.name));
+        const detail = invalid.length ? `\nInvalid tool names: ${invalid.map((x) => `[${x.i}] ${JSON.stringify(x.name)}`).join(', ')}` : '';
+        throw new UnifiedAgentError((e as Error).message + detail, e);
+      }
+    })();
 
     const messages: ChatMessage[] =
       typeof opts.prompt === 'string' ? ([{ role: 'user', content: opts.prompt }] as ChatMessage[]) : opts.prompt;
@@ -405,12 +438,12 @@ export class UnifiedAgentSDK {
           { controller, toolExecutor }
         );
 
-        // Forward engine events into the outer bus.
+        // Forward engine events into the outer bus, remapping tool names back to original names.
         const forwarder = (async () => {
-          for await (const ev of engineRun.events) bus.emit(ev);
+          for await (const ev of engineRun.events) bus.emit(remapEventToolNames(ev, toolNameMapping));
         })();
 
-        const result = await engineRun.result;
+        const result = remapResultToolNames(await engineRun.result, toolNameMapping);
         await forwarder.catch(() => {});
         await engineRun.close().catch(() => {});
 
@@ -530,6 +563,29 @@ export class UnifiedAgentSDK {
       },
     ];
   }
+}
+
+function remapEventToolNames(ev: AgentEvent, mapping: ToolNameMapping): AgentEvent {
+  if (ev.type === 'tool_call') {
+    return { ...ev, call: { ...ev.call, toolName: remapToolNameToOriginal(mapping, ev.call.toolName) } };
+  }
+  if (ev.type === 'tool_result') {
+    return { ...ev, result: { ...ev.result, toolName: remapToolNameToOriginal(mapping, ev.result.toolName) } };
+  }
+  if (ev.type === 'step_finish') {
+    const toolCalls = ev.step.toolCalls?.map((c) => ({ ...c, toolName: remapToolNameToOriginal(mapping, c.toolName) }));
+    const toolResults = ev.step.toolResults?.map((r) => ({ ...r, toolName: remapToolNameToOriginal(mapping, r.toolName) }));
+    return { ...ev, step: { ...ev.step, toolCalls, toolResults } };
+  }
+  return ev;
+}
+
+function remapResultToolNames(res: AgentResult, mapping: ToolNameMapping): AgentResult {
+  return {
+    ...res,
+    toolCalls: (res.toolCalls ?? []).map((c) => ({ ...c, toolName: remapToolNameToOriginal(mapping, c.toolName) })),
+    toolResults: (res.toolResults ?? []).map((r) => ({ ...r, toolName: remapToolNameToOriginal(mapping, r.toolName) })),
+  };
 }
 
 function normaliseChatMessages(system: string | undefined, messages: ChatMessage[]): ChatMessage[] {
