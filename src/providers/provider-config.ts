@@ -20,6 +20,11 @@ export interface AiSdkProviderConfig {
   middleware?: any[];
   /** Optional tagName for extractReasoningMiddleware convenience. */
   reasoningTagName?: string;
+  /**
+   * AI SDK-only escape hatch: provider-native tool objects to pass directly to `ai.streamText({ tools })`.
+   * These tools bypass unified-agent-sdk ToolExecutor/policy; avoid for core functionality.
+   */
+  builtInTools?: Record<string, any>;
 }
 
 export interface OllamaProviderConfig {

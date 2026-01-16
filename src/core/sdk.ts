@@ -19,10 +19,20 @@ import { createRetrievalTools } from '../tools/retrieval-tools.js';
 import type { AuggieProviderConfig, AiSdkProviderConfig, OllamaProviderConfig } from '../providers/provider-config.js';
 import { defaultModelCatalog, type ModelCatalog } from '../routing/model-catalog.js';
 import { ModelRouter } from '../routing/router.js';
+import { CircuitBreaker, type CircuitBreakerSnapshot, type CircuitBreakerOptions } from '../routing/circuit-breaker.js';
 import { AiSdkEngine } from '../providers/ai-sdk/ai-sdk-engine.js';
 import { AuggieEngine } from '../providers/auggie/auggie-engine.js';
 import { OllamaEngine } from '../providers/ollama/ollama-engine.js';
 import { attachSessionUpdates, type SessionUpdateHooks } from '../compat/session-updates.js';
+import type { ConfigStore } from '../config/config-store.js';
+import {
+  applyToolNamePolicy,
+  remapToolNameToOriginal,
+  type ToolNameMapping,
+  type ToolNamePolicy,
+  type ToolNameTransform,
+  isValidToolName,
+} from '../tools/tool-name-policy.js';
 
 export interface UnifiedAgentSDKConfig {
   providers: {
@@ -31,10 +41,16 @@ export interface UnifiedAgentSDKConfig {
     ollama?: OllamaProviderConfig;
   };
   memory?: SharedMemoryPool;
+  configStore?: ConfigStore;
   /**
    * Model catalog used for routing. You can add/override models via `sdk.models.register(...)`.
    */
   models?: ModelCatalog;
+  routing?: {
+    circuitBreaker?: CircuitBreakerOptions;
+    /** Key used when persisting routing state in a ConfigStore. */
+    stateKey?: string;
+  };
 }
 
 export interface RunHooks {
@@ -48,6 +64,11 @@ export interface RunRouting {
   modelClass?: ModelClass;
   preferredProviders?: ProviderId[];
   allowFallback?: boolean;
+  mustStream?: boolean;
+  requiresTools?: boolean;
+  allowedProviders?: ProviderId[];
+  blockedProviders?: ProviderId[];
+  minContextTokens?: number;
 }
 
 export type CapabilityValue = boolean | 'unknown';
@@ -83,6 +104,17 @@ export interface RunOptions {
   tools?: ToolDefinition[];
   retriever?: RetrieverPort;
   fsTools?: RunFsToolsOptions;
+  /**
+   * Tool name policy applied at the SDK boundary (before calling providers).
+   * - `strict` (default): validate names and throw a detailed error before provider invocation.
+   * - `sanitize`: normalize invalid names and keep an internal mapping; events/results are remapped back to original names.
+   */
+  toolNamePolicy?: ToolNamePolicy;
+  /**
+   * Advanced hook to transform tool names for provider compatibility. Returned `name` is provider-facing.
+   * `displayName` is stored for downstream UI use (not currently emitted).
+   */
+  toolNameTransform?: ToolNameTransform;
 
   /** Provider-specific options (e.g. Ollama think level). */
   metadata?: Record<string, unknown>;
@@ -120,11 +152,16 @@ export class UnifiedAgentSDK {
   readonly memory: SharedMemoryPool;
   readonly models: ModelCatalog;
   private readonly router: ModelRouter;
+  private circuitBreaker: CircuitBreaker;
+  private circuitBreakerLoaded = false;
+  private circuitBreakerLoadPromise: Promise<void> | null = null;
+  private circuitBreakerSaveQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly config: UnifiedAgentSDKConfig) {
     this.memory = config.memory ?? new SharedMemoryPool();
     this.models = config.models ?? defaultModelCatalog();
     this.router = new ModelRouter(this.models);
+    this.circuitBreaker = new CircuitBreaker(config.routing?.circuitBreaker);
   }
 
   getProviderCapabilities(): ProviderCapabilities[] {
@@ -228,6 +265,7 @@ export class UnifiedAgentSDK {
     const runId = uuid();
     const controller = new RunController();
     const outerBus = new EventBus();
+    outerBus.emit({ type: 'waking_up', at: Date.now() });
 
     const api: ThinkingTimeApi = {
       pause: () => controller.pause(),
@@ -292,17 +330,33 @@ export class UnifiedAgentSDK {
 
     const policy = opts.policy ?? new AllowAllToolsPolicy();
 
-    const tools: ToolDefinition[] = [
+    const rawTools: ToolDefinition[] = [
       ...createFsTools({ events: bus, preview: workspaceMode === 'preview', ...(opts.fsTools ?? {}) }),
       ...createMemoryTools({ events: bus }),
       ...(opts.retriever ? createRetrievalTools(opts.retriever, { events: bus }) : []),
       ...(opts.tools ?? []),
     ];
 
+    // Tool name policy (provider-facing tools may differ; SDK callers always see original names).
+    const { tools, mapping: toolNameMapping } = (() => {
+      try {
+        return applyToolNamePolicy(rawTools, { policy: opts.toolNamePolicy, transform: opts.toolNameTransform });
+      } catch (e) {
+        // Provide deterministic, indexed context even if the underlying provider would error later.
+        const invalid = rawTools
+          .map((t, i) => ({ i, name: t.name }))
+          .filter((x) => !isValidToolName(x.name));
+        const detail = invalid.length ? `\nInvalid tool names: ${invalid.map((x) => `[${x.i}] ${JSON.stringify(x.name)}`).join(', ')}` : '';
+        throw new UnifiedAgentError((e as Error).message + detail, e);
+      }
+    })();
+
     const messages: ChatMessage[] =
       typeof opts.prompt === 'string' ? ([{ role: 'user', content: opts.prompt }] as ChatMessage[]) : opts.prompt;
 
     const availability = this.getAvailability();
+
+    await this.loadCircuitBreakerState();
 
     const plan = this.router.plan(
       availability,
@@ -313,7 +367,16 @@ export class UnifiedAgentSDK {
         preferredProviders: opts.routing?.preferredProviders,
         allowFallback: opts.routing?.allowFallback,
       },
-      { mustStream: true, requiresTools: tools.length > 0 }
+      {
+        mustStream: opts.routing?.mustStream ?? true,
+        requiresTools: opts.routing?.requiresTools ?? tools.length > 0,
+        allowedProviders: opts.routing?.allowedProviders,
+        blockedProviders: opts.routing?.blockedProviders,
+        minContextTokens: opts.routing?.minContextTokens,
+      },
+      {
+        score: (c) => this.scoreCandidate(c.ref, c.profile),
+      }
     );
 
     if (plan.candidates.length === 0) throw new UnifiedAgentError('No providers/models available for this request');
@@ -376,20 +439,24 @@ export class UnifiedAgentSDK {
           { controller, toolExecutor }
         );
 
-        // Forward engine events into the outer bus.
+        // Forward engine events into the outer bus, remapping tool names back to original names.
         const forwarder = (async () => {
-          for await (const ev of engineRun.events) bus.emit(ev);
+          for await (const ev of engineRun.events) bus.emit(remapEventToolNames(ev, toolNameMapping));
         })();
 
-        const result = await engineRun.result;
+        const result = remapResultToolNames(await engineRun.result, toolNameMapping);
         await forwarder.catch(() => {});
         await engineRun.close().catch(() => {});
 
         if (attemptWorkspace instanceof JournalWorkspace) attemptWorkspace.commit();
+        this.circuitBreaker.recordSuccess(c.ref);
+        await this.saveCircuitBreakerState();
 
         return result;
       } catch (e) {
         lastError = e;
+        this.circuitBreaker.recordFailure(c.ref);
+        await this.saveCircuitBreakerState();
         bus.emit({ type: 'error', error: (e as Error).message || String(e), raw: e, at: Date.now() });
 
         if (attemptWorkspace instanceof JournalWorkspace) {
@@ -411,6 +478,51 @@ export class UnifiedAgentSDK {
 
     bus.close(lastError);
     throw new UnifiedAgentError('All provider candidates failed', lastError);
+  }
+
+  private scoreCandidate(ref: string, profile: { latencyRank?: number; costRank?: number } | undefined): number {
+    const latency = profile?.latencyRank ?? 100;
+    const cost = profile?.costRank ?? 100;
+    const penalty = this.circuitBreaker.getPenalty(ref);
+    return latency * 10 + cost + penalty;
+  }
+
+  private circuitBreakerStateKey(): string {
+    return this.config.routing?.stateKey ?? 'routing:circuitBreaker:v1';
+  }
+
+  private async loadCircuitBreakerState(): Promise<void> {
+    if (this.circuitBreakerLoaded) return;
+    if (this.circuitBreakerLoadPromise) return this.circuitBreakerLoadPromise;
+
+    this.circuitBreakerLoadPromise = (async () => {
+      const store = this.config.configStore;
+      if (!store) {
+        this.circuitBreakerLoaded = true;
+        return;
+      }
+      const snap = await store.get<CircuitBreakerSnapshot>(this.circuitBreakerStateKey());
+      if (snap?.version !== 1) {
+        this.circuitBreakerLoaded = true;
+        return;
+      }
+      // Replace internal state by re-constructing from snapshot.
+      (this as any).circuitBreaker = new CircuitBreaker(this.config.routing?.circuitBreaker, snap);
+      this.circuitBreakerLoaded = true;
+    })().finally(() => {
+      this.circuitBreakerLoadPromise = null;
+    });
+
+    return this.circuitBreakerLoadPromise;
+  }
+
+  private async saveCircuitBreakerState(): Promise<void> {
+    const store = this.config.configStore;
+    if (!store) return;
+    const key = this.circuitBreakerStateKey();
+    const snapshot = this.circuitBreaker.snapshot();
+    this.circuitBreakerSaveQueue = this.circuitBreakerSaveQueue.then(() => store.set(key, snapshot), () => store.set(key, snapshot));
+    await this.circuitBreakerSaveQueue;
   }
 
   private createEngine(provider: ProviderId) {
@@ -452,6 +564,29 @@ export class UnifiedAgentSDK {
       },
     ];
   }
+}
+
+function remapEventToolNames(ev: AgentEvent, mapping: ToolNameMapping): AgentEvent {
+  if (ev.type === 'tool_call') {
+    return { ...ev, call: { ...ev.call, toolName: remapToolNameToOriginal(mapping, ev.call.toolName) } };
+  }
+  if (ev.type === 'tool_result') {
+    return { ...ev, result: { ...ev.result, toolName: remapToolNameToOriginal(mapping, ev.result.toolName) } };
+  }
+  if (ev.type === 'step_finish') {
+    const toolCalls = ev.step.toolCalls?.map((c) => ({ ...c, toolName: remapToolNameToOriginal(mapping, c.toolName) }));
+    const toolResults = ev.step.toolResults?.map((r) => ({ ...r, toolName: remapToolNameToOriginal(mapping, r.toolName) }));
+    return { ...ev, step: { ...ev.step, toolCalls, toolResults } };
+  }
+  return ev;
+}
+
+function remapResultToolNames(res: AgentResult, mapping: ToolNameMapping): AgentResult {
+  return {
+    ...res,
+    toolCalls: (res.toolCalls ?? []).map((c) => ({ ...c, toolName: remapToolNameToOriginal(mapping, c.toolName) })),
+    toolResults: (res.toolResults ?? []).map((r) => ({ ...r, toolName: remapToolNameToOriginal(mapping, r.toolName) })),
+  };
 }
 
 function normaliseChatMessages(system: string | undefined, messages: ChatMessage[]): ChatMessage[] {
