@@ -1,6 +1,6 @@
 {
   "name": "@neuralsea/unified-agent-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Provider-agnostic agent SDK (Auggie, Vercel AI SDK, Ollama) with unified events, policies, routing, memory, and workspace tools.",
   "keywords": [
     "agent",
@@ -44,7 +44,7 @@
     "@ai-sdk/gateway": ">=0.0.0",
     "@ai-sdk/openai": ">=2.0.0",
     "@augmentcode/auggie-sdk": ">=0.0.0",
-    "ai": ">=6.0.0",
+    "ai": ">=6.0.39",
     "ollama": ">=0.0.0"
   },
   "peerDependenciesMeta": {
@@ -95,7 +95,7 @@
     "@neuralsea/neo4j-agent-memory": "^0.6.1",
     "@types/node": "^22.10.0",
     "@types/uuid": "^10.0.0",
-    "ai": "^6.0.0",
+    "ai": "^6.0.39",
     "typescript": "^5.9.3"
   }
 }

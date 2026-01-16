@@ -15,6 +15,9 @@ pnpm-debug.log*
 .env
 .env.*
 
+# EffortTrace (local trace logs)
+.efforttrace/
+
 # Editor/OS
 .DS_Store
 .vscode/
