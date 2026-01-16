@@ -1,0 +1,82 @@
+{
+  "name": "@neuralsea/unified-agent-sdk",
+  "version": "0.1.0",
+  "description": "Provider-agnostic agent SDK (Auggie, Vercel AI SDK, Ollama) with unified events, policies, routing, memory, and workspace tools.",
+  "keywords": [
+    "agent",
+    "ai",
+    "tools",
+    "vercel-ai-sdk",
+    "ollama",
+    "augment",
+    "auggie"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
+    },
+    "./workspaces/vscode": {
+      "types": "./dist/types/workspaces/vscode.d.ts",
+      "import": "./dist/esm/workspaces/vscode.js",
+      "require": "./dist/cjs/workspaces/vscode.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "@ai-sdk/anthropic": ">=2.0.0",
+    "@ai-sdk/gateway": ">=0.0.0",
+    "@ai-sdk/openai": ">=2.0.0",
+    "@augmentcode/auggie-sdk": ">=0.0.0",
+    "ai": ">=6.0.0",
+    "ollama": ">=0.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    },
+    "@ai-sdk/openai": {
+      "optional": true
+    },
+    "@ai-sdk/anthropic": {
+      "optional": true
+    },
+    "@ai-sdk/gateway": {
+      "optional": true
+    },
+    "@augmentcode/auggie-sdk": {
+      "optional": true
+    },
+    "ollama": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "uuid": "^9.0.1"
+  },
+  "scripts": {
+    "clean": "node ./scripts/clean.mjs",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json && node ./scripts/rename-cjs.mjs",
+    "build:types": "tsc -p tsconfig.types.json",
+    "build": "npm run clean && npm run build:types && npm run build:esm && npm run build:cjs",
+    "lint": "node -e \"console.log('No lint configured (deliberately minimal).')\""
+  },
+  "devDependencies": {
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.9.3"
+  }
+}
