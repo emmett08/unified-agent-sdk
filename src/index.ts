@@ -24,6 +24,12 @@ export type { ToolDefinition } from './tools/tool-types.js';
 export { createFsTools } from './tools/fs-tools.js';
 export { createMemoryTools } from './tools/memory-tools.js';
 export { applyToolNamePolicy, type ToolNamePolicy, type ToolNameTransform, type ToolNameTransformResult, type ToolNameMapping } from './tools/tool-name-policy.js';
+export type { ShellPort } from './tools/shell-tool.js';
+export { createShellTool } from './tools/shell-tool.js';
+export type { DatabasePort } from './tools/db-tools.js';
+export { createDatabaseTools } from './tools/db-tools.js';
+export type { KnowledgeBasePort } from './tools/kb-tools.js';
+export { createKnowledgeBaseTools } from './tools/kb-tools.js';
 
 export type { ConfigStore } from './config/config-store.js';
 export { MemoryConfigStore } from './config/config-store.js';

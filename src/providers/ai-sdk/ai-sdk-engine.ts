@@ -67,7 +67,12 @@ export class AiSdkEngine implements AgentEngine {
     const toolNameToDef = new Map(deps.toolExecutor.getToolNames().map((n) => [n, deps.toolExecutor.getTool(n)!]));
     const pendingIdsByHash = new Map<string, string[]>();
 
-    const tools: Record<string, any> = {};
+    const tools: Record<string, any> = { ...(this.cfg.builtInTools ?? {}) };
+    for (const name of toolNameToDef.keys()) {
+      if (Object.prototype.hasOwnProperty.call(tools, name)) {
+        throw new UnifiedAgentError(`AI SDK builtInTools name collides with unified tool: ${JSON.stringify(name)}`);
+      }
+    }
     for (const [name, def] of toolNameToDef.entries()) {
       tools[name] = ai.tool({
         description: def.description,
