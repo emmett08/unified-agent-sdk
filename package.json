@@ -75,7 +75,13 @@
     "build": "npm run clean && npm run build:types && npm run build:esm && npm run build:cjs",
     "lint": "node -e \"console.log('No lint configured (deliberately minimal).')\"",
     "demo:openai": "node ./examples/openai-chatgpt-5.2-cli.mjs",
-    "demo:openai:help": "node ./examples/openai-chatgpt-5.2-cli.mjs --help"
+    "demo:openai:help": "node ./examples/openai-chatgpt-5.2-cli.mjs --help",
+    "demo:memory-audit": "node ./examples/memory-repo-audit.cjs",
+    "demo:memory-audit:help": "node ./examples/memory-repo-audit.cjs --help",
+    "demo:retrieval:tool": "node ./examples/retrieval-custom-index.cjs",
+    "demo:retrieval:tool:help": "node ./examples/retrieval-custom-index.cjs --help",
+    "demo:retrieval:app": "node ./examples/retrieval-preload-context.cjs",
+    "demo:retrieval:app:help": "node ./examples/retrieval-preload-context.cjs --help"
   },
   "devDependencies": {
     "@ai-sdk/openai": "^2.0.0",

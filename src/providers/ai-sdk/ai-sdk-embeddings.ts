@@ -13,8 +13,17 @@ export class AiSdkEmbeddingProvider implements EmbeddingProvider {
 
     // Choose embedding model. In AI SDK, embedMany expects a model.
     const model = await this.createModel(ai, this.embeddingModel);
-    if (!ai.embedMany) throw new ProviderUnavailableError('ai-sdk', 'embedMany unavailable in installed ai version');
+    // Prefer calling the embedding model directly.
+    // Some AI SDK versions assume `warnings` is always present in `embedMany` results; some providers omit it.
+    // Calling doEmbed avoids that aggregation path.
+    if (model?.doEmbed) {
+      const res = await model.doEmbed({ values: texts });
+      const embeddings = res?.embeddings ?? res?.values ?? res;
+      return (embeddings ?? []).map((e: any) => e.embedding ?? e);
+    }
 
+    // Fallback: AI SDK helper.
+    if (!ai.embedMany) throw new ProviderUnavailableError('ai-sdk', 'embedMany unavailable in installed ai version');
     const res = await ai.embedMany({ model, values: texts });
     return (res.embeddings ?? res).map((e: any) => e.embedding ?? e);
   }
@@ -34,7 +43,14 @@ export class AiSdkEmbeddingProvider implements EmbeddingProvider {
     if (modelId.startsWith('openai/')) {
       const { createOpenAI } = await dynamicImport('@ai-sdk/openai').catch(() => { throw new ProviderUnavailableError('ai-sdk', 'Install @ai-sdk/openai'); });
       const openai = createOpenAI({ apiKey: this.cfg.openaiApiKey, baseURL: this.cfg.openaiBaseUrl });
-      return openai(modelId.replace(/^openai\//, ''));
+      const id = modelId.replace(/^openai\//, '');
+      // AI SDK v6: embeddings require `openai.embedding(...)` / `openai.textEmbeddingModel(...)`,
+      // not the language-model factory.
+      if (typeof openai.textEmbeddingModel === 'function') return openai.textEmbeddingModel(id);
+      if (typeof openai.embedding === 'function') return openai.embedding(id);
+      // Best-effort fallback for older/newer variants.
+      if (typeof openai.textEmbedding === 'function') return openai.textEmbedding(id);
+      return openai(id);
     }
     return modelId;
   }

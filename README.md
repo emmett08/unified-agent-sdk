@@ -72,6 +72,31 @@ OPENAI_API_KEY=... npm run build
 OPENAI_API_KEY=... npm run demo:openai -- --out demo/agent-proof.txt --model openai/gpt-4o-mini
 ```
 
+This demo also prints an example of agent “episodic / procedural / semantic” memory (stored via `memory_set` and read back from `SharedMemoryPool`). Disable with `--no-memory`.
+
+## Demo: SharedMemoryPool repo audit (2-pass)
+
+This demo runs two agent passes in the same process to show SharedMemoryPool reuse:
+1) scan repo + store a compact audit via `memory_set`
+2) generate a markdown report via `memory_get` + `fs_write_file`
+
+```bash
+OPENAI_API_KEY=... npm run build
+OPENAI_API_KEY=... npm run demo:memory-audit -- --out demo/memory-repo-audit.md --model openai/gpt-4o-mini
+```
+
+## Demo: Retrieval (custom index + embedder)
+
+This demo shows how to plug in:
+- a custom `RetrieverPort` (here: `SimpleVectorIndex`)
+- a custom `EmbeddingProvider` wrapper that caches embeddings in `SharedMemoryPool`
+
+```bash
+OPENAI_API_KEY=... npm run build
+OPENAI_API_KEY=... npm run demo:retrieval:tool -- --question "Where is SharedMemoryPool used?"
+OPENAI_API_KEY=... npm run demo:retrieval:app -- --question "Where is SharedMemoryPool used?"
+```
+
 ## VS Code workspace adapter
 
 This SDK does **not** depend on `vscode`. Use the adapter entrypoint:

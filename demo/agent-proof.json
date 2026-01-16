@@ -1,0 +1,23 @@
+{
+  "runId": "d65c4db7-400c-44e1-813d-47ada5231209",
+  "provider": "ai-sdk",
+  "model": "openai/gpt-4o-mini",
+  "startedAt": 1768524623376,
+  "finishedAt": 1768524629108,
+  "finishReason": "other",
+  "counts": {
+    "thinkingChunks": 0,
+    "thinkingChars": 0,
+    "textChunks": 7,
+    "textChars": 26,
+    "toolCalls": 5,
+    "toolResults": 5,
+    "approvals": 1,
+    "fileChanges": 1,
+    "errors": 0
+  },
+  "samples": {
+    "thinkingFirst200": "",
+    "textFirst200": "Wrote demo/agent-proof.txt"
+  }
+}

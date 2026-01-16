@@ -11,6 +11,16 @@ function toBytes(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
+function snapshotKey(path: string): string {
+  return `fs:${path}`;
+}
+
+async function fileFingerprint(ctx: ToolExecutionContext, path: string): Promise<string> {
+  const s = await ctx.workspace.stat(path).catch(() => null);
+  if (!s) return 'nostat';
+  return `${s.mtimeMs ?? 0}:${s.size ?? 0}:${s.isFile ? 'f' : s.isDirectory ? 'd' : 'o'}`;
+}
+
 export interface FsToolOptions {
   events: EventBus;
   preview: boolean;
@@ -36,7 +46,14 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
       },
       capabilities: ['fs:read'],
       execute: async (args: any, ctx: ToolExecutionContext) => {
-        const bytes = await ctx.workspace.readFile(args.path);
+        const path = String(args.path);
+        const fp = await fileFingerprint(ctx, path);
+        const key = snapshotKey(path);
+
+        const cached = ctx.memory.fileSnapshots.get(key);
+        const bytes = cached && cached.hash === fp ? cached.bytes : await ctx.workspace.readFile(path);
+
+        if (!cached || cached.hash !== fp) ctx.memory.fileSnapshots.set(key, { hash: fp, bytes });
         const max = typeof args.maxBytes === 'number' ? args.maxBytes : undefined;
         const sliced = max ? bytes.slice(0, max) : bytes;
         return utf8(sliced);
@@ -56,9 +73,13 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
       },
       capabilities: ['fs:write'],
       execute: async (args: any, ctx: ToolExecutionContext) => {
-        const existed = (await ctx.workspace.stat(args.path)) !== null;
-        await ctx.workspace.writeFile(args.path, toBytes(String(args.content)));
-        emitChange(fileChange(existed ? 'update' : 'create', args.path, preview));
+        const path = String(args.path);
+        const existed = (await ctx.workspace.stat(path)) !== null;
+        const bytes = toBytes(String(args.content));
+        await ctx.workspace.writeFile(path, bytes);
+        const fp = await fileFingerprint(ctx, path);
+        ctx.memory.fileSnapshots.set(snapshotKey(path), { hash: fp, bytes });
+        emitChange(fileChange(existed ? 'update' : 'create', path, preview));
         return { ok: true };
       },
     },
@@ -73,8 +94,10 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
       },
       capabilities: ['fs:delete'],
       execute: async (args: any, ctx: ToolExecutionContext) => {
-        await ctx.workspace.deletePath(args.path);
-        emitChange(fileChange('delete', args.path, preview));
+        const path = String(args.path);
+        await ctx.workspace.deletePath(path);
+        ctx.memory.fileSnapshots.delete(snapshotKey(path));
+        emitChange(fileChange('delete', path, preview));
         return { ok: true };
       },
     },
@@ -89,8 +112,14 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
       },
       capabilities: ['fs:rename'],
       execute: async (args: any, ctx: ToolExecutionContext) => {
-        await ctx.workspace.renamePath(args.fromPath, args.toPath);
-        emitChange({ kind: 'rename', fromPath: args.fromPath, toPath: args.toPath, preview });
+        const fromPath = String(args.fromPath);
+        const toPath = String(args.toPath);
+        await ctx.workspace.renamePath(fromPath, toPath);
+        const fromKey = snapshotKey(fromPath);
+        const cached = ctx.memory.fileSnapshots.get(fromKey);
+        ctx.memory.fileSnapshots.delete(fromKey);
+        if (cached) ctx.memory.fileSnapshots.set(snapshotKey(toPath), cached);
+        emitChange({ kind: 'rename', fromPath, toPath, preview });
         return { ok: true };
       },
     },
@@ -137,6 +166,12 @@ export function createFsTools(opts: FsToolOptions): ToolDefinition[] {
             await ctx.workspace.writeFile(path, toBytes(text));
             emitChange(fileChange(existed ? 'update' : 'create', path, preview));
           }
+
+          // Refresh snapshot to avoid redundant re-reads in the same run / subsequent runs sharing memory.
+          const bytes = toBytes(text);
+          const fp = await fileFingerprint(ctx, path);
+          ctx.memory.fileSnapshots.set(snapshotKey(path), { hash: fp, bytes });
+
           results.push({ path, hunksApplied: total });
         }
 
