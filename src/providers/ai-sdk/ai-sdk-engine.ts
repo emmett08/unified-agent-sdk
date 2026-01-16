@@ -26,6 +26,34 @@ function stableJson(v: unknown): string {
   return JSON.stringify(walk(v));
 }
 
+function extractRequestId(final: any): string | undefined {
+  const direct = final?.requestId ?? final?.request_id ?? final?.id;
+  if (typeof direct === 'string' && direct) return direct;
+
+  const responseId = final?.response?.id ?? final?.rawResponse?.id;
+  if (typeof responseId === 'string' && responseId) return responseId;
+
+  const headers = final?.response?.headers ?? final?.rawResponse?.headers;
+  const candidate =
+    headers?.['x-request-id'] ??
+    headers?.['x-requestid'] ??
+    headers?.['request-id'] ??
+    headers?.['openai-request-id'] ??
+    headers?.get?.('x-request-id') ??
+    headers?.get?.('openai-request-id');
+  if (typeof candidate === 'string' && candidate) return candidate;
+
+  return undefined;
+}
+
+function extractRawFinishReason(final: any): string | undefined {
+  const fr = final?.rawFinishReason ?? final?.finishReason;
+  if (typeof fr === 'string' && fr) return fr;
+  const choiceFr = final?.response?.choices?.[0]?.finish_reason;
+  if (typeof choiceFr === 'string' && choiceFr) return choiceFr;
+  return undefined;
+}
+
 export class AiSdkEngine implements AgentEngine {
   readonly id = 'ai-sdk' as const;
 
@@ -96,6 +124,10 @@ export class AiSdkEngine implements AgentEngine {
     const toolCalls: ToolCall[] = [];
     const toolResults: ToolResult[] = [];
     let finishReason: FinishReason = 'other';
+    const partCounts = new Map<string, number>();
+    const contentParts = new Set<'text' | 'tool' | 'json'>();
+    let sawStreamError = false;
+    let streamConsumed = false;
 
     const resultPromise = (async (): Promise<AgentResult> => {
       try {
@@ -144,10 +176,12 @@ export class AiSdkEngine implements AgentEngine {
 
             if (!part || typeof part !== 'object') continue;
             const t = part.type;
+            partCounts.set(String(t), (partCounts.get(String(t)) ?? 0) + 1);
             if (t === 'text' || t === 'text-delta') {
               const text = part.text ?? part.delta ?? '';
               if (text) {
                 finalText += text;
+                contentParts.add('text');
                 events.emit({ type: 'text_delta', text, at: Date.now() });
               }
             } else if (t === 'reasoning' || t === 'reasoning-delta') {
@@ -165,6 +199,7 @@ export class AiSdkEngine implements AgentEngine {
 
                 const call: ToolCall = { id, toolName, args };
                 toolCalls.push(call);
+                contentParts.add('tool');
                 events.emit({ type: 'tool_call', call, at: Date.now() });
                 events.emit({ type: 'status', status: 'acting', detail: toolName, at: Date.now() });
               }
@@ -175,29 +210,97 @@ export class AiSdkEngine implements AgentEngine {
               if (toolName) {
                 const tr: ToolResult = { id, toolName, result, isError: Boolean(part.isError) };
                 toolResults.push(tr);
+                contentParts.add(typeof result === 'string' ? 'text' : 'json');
                 events.emit({ type: 'tool_result', result: tr, at: Date.now() });
               }
             } else if (t === 'error') {
               const msg = part.error?.message ?? part.message ?? 'Stream error';
               events.emit({ type: 'error', error: msg, raw: part, at: Date.now() });
               finishReason = 'error';
+              sawStreamError = true;
             }
           }
+          streamConsumed = true;
         } else if (streamResult.textStream) {
           for await (const chunk of streamResult.textStream as AsyncIterable<string>) {
             await deps.controller.waitIfPaused();
             if (deps.controller.signal.aborted) break;
             finalText += chunk;
+            contentParts.add('text');
             events.emit({ type: 'text_delta', text: chunk, at: Date.now() });
           }
+          streamConsumed = true;
         }
 
         const final = await streamResult;
-        const fr = final.finishReason ?? final.rawFinishReason;
+        const fr = extractRawFinishReason(final);
         finishReason = normaliseFinishReason(fr, deps.controller.signal.aborted);
 
         const usage = final.totalUsage ?? final.usage;
         if (usage) events.emit({ type: 'usage', usage: normaliseUsage(usage), at: Date.now() });
+
+        // Some AI SDK variants expose toolCalls/toolResults on the final result; use them as a fallback.
+        if (toolCalls.length === 0 && Array.isArray(final?.toolCalls)) {
+          for (const c of final.toolCalls) {
+            const toolName = c?.toolName ?? c?.name;
+            if (!toolName) continue;
+            toolCalls.push({ id: String(c?.toolCallId ?? c?.id ?? uuid()), toolName: String(toolName), args: c?.args ?? c?.input ?? {} });
+            contentParts.add('tool');
+          }
+        }
+        if (toolResults.length === 0 && Array.isArray(final?.toolResults)) {
+          for (const r of final.toolResults) {
+            const toolName = r?.toolName ?? r?.name;
+            if (!toolName) continue;
+            const result = r?.result ?? r?.output ?? r?.data;
+            toolResults.push({ id: String(r?.toolCallId ?? r?.id ?? uuid()), toolName: String(toolName), result, isError: Boolean(r?.isError) });
+            contentParts.add(typeof result === 'string' ? 'text' : 'json');
+          }
+        }
+
+        const trimmed = finalText.trim();
+        const toolOnly = trimmed.length === 0 && toolCalls.length > 0;
+        const empty = trimmed.length === 0 && toolCalls.length === 0;
+        const requestId = extractRequestId(final);
+        const rawFinish = extractRawFinishReason(final);
+        const refusalOrFiltered =
+          typeof rawFinish === 'string' && /refus|filter|content[_-]?filter/i.test(rawFinish);
+
+        events.emit({
+          type: 'provider_debug',
+          provider: 'ai-sdk',
+          name: 'result_summary',
+          data: {
+            toolOnly,
+            empty,
+            contentParts: [...contentParts],
+            partCounts: Object.fromEntries(partCounts),
+            streamConsumed,
+            sawStreamError,
+            aborted: deps.controller.signal.aborted,
+            finishReason,
+            rawFinishReason: rawFinish,
+            refusalOrFiltered,
+            requestId,
+          },
+          at: Date.now(),
+        });
+
+        // "Don't lie to yourself" rule:
+        // - tool-only is OK (successful tool loop can legitimately produce no assistant text)
+        // - empty with no tools is treated as an error and should allow failover.
+        if (empty && !deps.controller.signal.aborted) {
+          const err = new UnifiedAgentError(
+            `AI SDK returned no assistant text and no tool calls${requestId ? ` (requestId=${requestId})` : ''}`
+          );
+          events.emit({
+            type: 'error',
+            error: err.message,
+            raw: { requestId, rawFinishReason: rawFinish, final },
+            at: Date.now(),
+          });
+          throw err;
+        }
 
         events.emit({ type: 'run_finish', runId: req.runId, reason: finishReason, at: Date.now() });
         events.close();
