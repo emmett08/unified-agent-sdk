@@ -1,6 +1,6 @@
 {
   "name": "@neuralsea/unified-agent-sdk",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Provider-agnostic agent SDK (Auggie, Vercel AI SDK, Ollama) with unified events, policies, routing, memory, and workspace tools.",
   "keywords": [
     "agent",
