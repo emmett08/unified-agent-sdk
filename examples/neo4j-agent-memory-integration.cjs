@@ -72,7 +72,11 @@ function parseArgs(argv) {
 
 function requireEnv(name) {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing ${name}`);
+  if (!v) {
+    console.error(`Missing ${name}\n`);
+    console.error(usage());
+    process.exit(2);
+  }
   return v;
 }
 
@@ -293,4 +297,3 @@ function formatBundle(bundle) {
   console.error(e);
   process.exit(1);
 });
-

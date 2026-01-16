@@ -379,7 +379,13 @@ export class UnifiedAgentSDK {
       }
     );
 
-    if (plan.candidates.length === 0) throw new UnifiedAgentError('No providers/models available for this request');
+    if (plan.candidates.length === 0) {
+      const err = new UnifiedAgentError('No providers/models available for this request');
+      bus.emit({ type: 'error', error: err.message, raw: err, at: Date.now() });
+      bus.emit({ type: 'run_finish', runId, reason: 'error', at: Date.now() });
+      bus.close(err);
+      throw err;
+    }
 
     bus.emit({
       type: 'status',
