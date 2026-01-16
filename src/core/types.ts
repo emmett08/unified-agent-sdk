@@ -68,6 +68,7 @@ export interface AgentEventMeta {
 
 type AgentEventCore =
   | { type: 'run_start'; runId: string; provider: ProviderId; model: string; startedAt: number }
+  | { type: 'waking_up'; at: number }
   | { type: 'status'; status: RunStatus; detail?: string; at: number }
   | { type: 'thinking_delta'; text: string; at: number }
   | { type: 'text_delta'; text: string; at: number }

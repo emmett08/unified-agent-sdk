@@ -265,6 +265,7 @@ export class UnifiedAgentSDK {
     const runId = uuid();
     const controller = new RunController();
     const outerBus = new EventBus();
+    outerBus.emit({ type: 'waking_up', at: Date.now() });
 
     const api: ThinkingTimeApi = {
       pause: () => controller.pause(),
