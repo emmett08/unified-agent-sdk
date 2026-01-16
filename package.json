@@ -81,10 +81,15 @@
     "demo:retrieval:tool": "node ./examples/retrieval-custom-index.cjs",
     "demo:retrieval:tool:help": "node ./examples/retrieval-custom-index.cjs --help",
     "demo:retrieval:app": "node ./examples/retrieval-preload-context.cjs",
-    "demo:retrieval:app:help": "node ./examples/retrieval-preload-context.cjs --help"
+    "demo:retrieval:app:help": "node ./examples/retrieval-preload-context.cjs --help",
+    "demo:retrieval:petri": "node ./examples/retrieval-petri-workspace-indexer.cjs",
+    "demo:retrieval:petri:help": "node ./examples/retrieval-petri-workspace-indexer.cjs --help",
+    "demo:neo4j-memory": "node ./examples/neo4j-agent-memory-integration.cjs",
+    "demo:neo4j-memory:help": "node ./examples/neo4j-agent-memory-integration.cjs --help"
   },
   "devDependencies": {
     "@ai-sdk/openai": "^2.0.0",
+    "@neuralsea/neo4j-agent-memory": "^0.6.1",
     "@types/uuid": "^10.0.0",
     "ai": "^6.0.0",
     "typescript": "^5.9.3"

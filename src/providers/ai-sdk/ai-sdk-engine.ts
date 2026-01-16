@@ -36,6 +36,17 @@ export class AiSdkEngine implements AgentEngine {
     // Our SDK uses plain JSON Schema objects, so wrap them to avoid "schema is not a function".
     if (!inputSchema) return inputSchema;
     if (typeof inputSchema === 'function') return inputSchema;
+
+    // Already an AI SDK schema wrapper
+    const schemaSym = Symbol.for('vercel.ai.schema');
+    if (typeof inputSchema === 'object' && inputSchema && (inputSchema as any)[schemaSym] === true) return inputSchema;
+
+    // Zod schema (common in tool adapters). Prefer wrapping via ai.zodSchema if available.
+    if (typeof inputSchema === 'object' && inputSchema && typeof (inputSchema as any).safeParse === 'function') {
+      if (ai?.zodSchema) return ai.zodSchema(inputSchema);
+      return inputSchema;
+    }
+
     if (typeof inputSchema === 'object' && ai?.jsonSchema) return ai.jsonSchema(inputSchema);
     return inputSchema;
   }

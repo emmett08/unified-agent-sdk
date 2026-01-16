@@ -17,6 +17,7 @@ export { createMemoryTools } from './tools/memory-tools.js';
 export type { RetrieverPort, RetrievedChunk } from './retrieval/retriever.js';
 export type { EmbeddingProvider } from './retrieval/embedding.js';
 export { SimpleVectorIndex } from './retrieval/simple-vector-index.js';
+export { PetriWorkspaceIndexerRetriever } from './retrieval/petri-workspace-indexer-retriever.js';
 
 export { AiSdkEmbeddingProvider } from './providers/ai-sdk/ai-sdk-embeddings.js';
 export { OllamaEmbeddingProvider } from './providers/ollama/ollama-embeddings.js';

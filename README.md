@@ -97,6 +97,28 @@ OPENAI_API_KEY=... npm run demo:retrieval:tool -- --question "Where is SharedMem
 OPENAI_API_KEY=... npm run demo:retrieval:app -- --question "Where is SharedMemoryPool used?"
 ```
 
+## Demo: Retrieval via Petri WorkspaceIndexer
+
+If you want a full workspace indexer (git-aware multi-repo, chunking, hybrid retrieval profiles, persistence), use `@neuralsea/workspace-indexer` as the embedder+indexer and plug it into this SDK via the `RetrieverPort` interface.
+
+```bash
+npm i -D @neuralsea/workspace-indexer
+OPENAI_API_KEY=... npm run build
+OPENAI_API_KEY=... npm run demo:retrieval:petri -- --mode tool --profile search --topk 6
+OPENAI_API_KEY=... npm run demo:retrieval:petri -- --mode app --profile architecture --topk 6
+```
+
+## Demo: Neo4j Agent Memory integration
+
+To use the `neo4j-agent-memory-demo` long-term memory graph with this SDK, run the agent loop here and call Neo4j memory APIs via tools.
+
+```bash
+npm i -D @neuralsea/neo4j-agent-memory
+OPENAI_API_KEY=... NEO4J_URI=neo4j://localhost:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=... npm run build
+OPENAI_API_KEY=... NEO4J_URI=neo4j://localhost:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=... npm run demo:neo4j-memory -- --mode tool
+OPENAI_API_KEY=... NEO4J_URI=neo4j://localhost:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=... npm run demo:neo4j-memory -- --mode app
+```
+
 ## VS Code workspace adapter
 
 This SDK does **not** depend on `vscode`. Use the adapter entrypoint:
